@@ -10,6 +10,7 @@
 #include <linux/blktrace_api.h>
 #include <linux/pr.h>
 #include <linux/uaccess.h>
+#include <linux/cdrom.h>
 
 static int blkpg_ioctl(struct block_device *bdev, struct blkpg_ioctl_arg __user *arg)
 {
@@ -605,6 +606,24 @@ int blkdev_ioctl(struct block_device *bdev, fmode_t mode, unsigned cmd,
 		return blkdev_pr_preempt(bdev, argp, true);
 	case IOC_PR_CLEAR:
 		return blkdev_pr_clear(bdev, argp);
+
+	/* Halium: workaround kernel panic on Unisoc devices
+	 *
+	 * The ufshcd-sprd driver appears to repurpose the CDROM_LAST_WRITTEN
+	 * ioctl number for its internal UFS_IOCTL_ENTER_MODE.
+	 *
+	 * While this is unlikely to be used on standard production devices, it
+	 * triggers a kernel panic when blkid attempts to probe for a CDROM device:
+	 * https://github.com/util-linux/util-linux/blob/master/libblkid/src/probe.c#L1073
+	 *
+	 * As a workaround, we filter out this ioctl here if the disk
+	 * does not have the GENHD_FL_CD flag set.
+	 */
+	case CDROM_LAST_WRITTEN:
+		if (!(bdev->bd_disk->flags & GENHD_FL_CD))
+			return -ENOTTY;
+		/* fallthrough */
+
 	default:
 		return __blkdev_driver_ioctl(bdev, mode, cmd, arg);
 	}
